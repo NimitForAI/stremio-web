@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main
+      - development
       - "fix/**"
   release:
     types: [published]
@@ -15,23 +15,31 @@ permissions:
 jobs:
   build-tizen:
     runs-on: ubuntu-latest
+    env:
+      # Don't register the Workbox service worker inside the .wgt.
+      SERVICE_WORKER_DISABLED: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0 # webpack.config.js runs `git rev-parse HEAD`
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
+          node-version-file: .nvmrc
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci || npm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build web bundle and package Tizen WGT
-        run: npm run package:tizen
+        run: pnpm package:tizen
 
       - name: Locate the generated .wgt
         id: wgt
