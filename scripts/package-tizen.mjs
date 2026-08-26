@@ -1,8 +1,8 @@
 import { access, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import JSZip from "jszip";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -37,7 +37,7 @@ async function pathExists(p) {
 
 async function assertBuildExists() {
   if (!(await pathExists(path.join(buildDir, "index.html")))) {
-    throw new Error(`Build output not found at ${buildDir}. Run "npm run build" first.`);
+    throw new Error(`Build output not found at ${buildDir}. Run "pnpm build" first.`);
   }
 }
 
@@ -88,25 +88,18 @@ async function injectHead() {
   await writeFile(indexPath, html.replace(/<head[^>]*>/i, (m) => `${m}${HEAD_INJECT}`), "utf8");
 }
 
+// The modern build copies icons into build/images and build/favicons.
 async function resolveIcon() {
-  const preferred = path.join(rootDir, "favicons", "icon-96.png");
+  const preferred = path.join(stagingDir, "images", "icon_196x196.png");
   if (await pathExists(preferred)) return preferred;
-  const faviconsDir = path.join(rootDir, "favicons");
-  if (await pathExists(faviconsDir)) {
-    const png = (await readdir(faviconsDir)).find((f) => f.toLowerCase().endsWith(".png"));
-    if (png) return path.join(faviconsDir, png);
+  for (const dir of ["images", "favicons"]) {
+    const full = path.join(stagingDir, dir);
+    if (await pathExists(full)) {
+      const png = (await readdir(full)).find((f) => f.toLowerCase().endsWith(".png"));
+      if (png) return path.join(full, png);
+    }
   }
-  throw new Error("No icon PNG found in favicons/. Add favicons/icon-96.png or set an icon.");
-}
-
-async function addDirectoryToZip(zip, dir, baseDir = dir) {
-  for (const entry of await readdir(dir, { withFileTypes: true })) {
-    if (entry.name === ".DS_Store") continue;
-    const full = path.join(dir, entry.name);
-    const rel = path.relative(baseDir, full).split(path.sep).join("/");
-    if (entry.isDirectory()) await addDirectoryToZip(zip, full, baseDir);
-    else if (entry.isFile()) zip.file(rel, await readFile(full));
-  }
+  throw new Error("No icon PNG found in build/images or build/favicons.");
 }
 
 async function packageTizen() {
@@ -124,13 +117,14 @@ async function packageTizen() {
   await writeFile(path.join(stagingDir, "config.xml"), buildConfigXml({ version }), "utf8");
   await injectHead();
 
-  console.log("zipping .wgt...");
-  const zip = new JSZip();
-  await addDirectoryToZip(zip, stagingDir);
-  const buffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
-
   const outputPath = path.join(rootDir, `${PACKAGE_ID}_${version}.wgt`);
-  await writeFile(outputPath, buffer);
+  await rm(outputPath, { force: true });
+
+  console.log("zipping .wgt...");
+  // A .wgt is a plain ZIP with config.xml at the archive root. Use the
+  // runner's built-in zip so no npm dependency (and no lockfile change).
+  execFileSync("zip", ["-r", "-X", "-q", outputPath, "."], { cwd: stagingDir, stdio: "inherit" });
+
   console.log(`Tizen WGT created: ${outputPath}`);
   console.log(`  app id: ${APP_ID}  package id: ${PACKAGE_ID}  required_version: ${REQUIRED_VERSION}`);
 }
